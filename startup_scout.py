@@ -2861,6 +2861,224 @@ def save_csv(results, filepath=OUTPUT_CSV):
     print(f"  ✓ CSV  → {filepath}")
 
 
+OUTPUT_HTML = "startup_scout_results.html"
+
+
+def save_html(results, filepath=OUTPUT_HTML, thesis=""):
+    SCORE_COLOR = {5: "#16a34a", 4: "#2563eb", 3: "#d97706", 2: "#ea580c", 1: "#dc2626", 0: "#6b7280"}
+    SCORE_BG    = {5: "#f0fdf4", 4: "#eff6ff", 3: "#fffbeb", 2: "#fff7ed", 1: "#fef2f2", 0: "#f9fafb"}
+    STARS       = {5: "★★★★★", 4: "★★★★☆", 3: "★★★☆☆", 2: "★★☆☆☆", 1: "★☆☆☆☆", 0: "☆☆☆☆☆"}
+
+    def esc(s):
+        return str(s or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;")
+
+    def score_bar(label, val, color):
+        val = int(val or 0)
+        pct = val * 20
+        return (
+            f'<div class="dim-row">'
+            f'<span class="dim-label">{label}</span>'
+            f'<div class="bar-track"><div class="bar-fill" style="width:{pct}%;background:{color}"></div></div>'
+            f'<span class="dim-val">{val}</span>'
+            f'</div>'
+        )
+
+    cards_json = []
+    cards_html = []
+    for r in results:
+        s     = int(r.get("overall_score", 0))
+        color = SCORE_COLOR.get(s, "#6b7280")
+        bg    = SCORE_BG.get(s, "#f9fafb")
+        name  = esc(r.get("name", ""))
+        url   = esc(r.get("website_url") or r.get("url") or "")
+        desc  = esc(r.get("description") or r.get("website_snippet") or "")[:300]
+        tags  = [t.strip() for t in str(r.get("tech_tags") or "").split(",") if t.strip()]
+        stage = esc(r.get("stage_guess") or "")
+        src   = esc(r.get("source") or "")
+        sig   = esc(r.get("best_signal") or "")
+        flag  = esc(r.get("red_flag") or "")
+        fund  = esc(r.get("funding_confidence") or "")
+        reason= esc(r.get("reason") or "")
+        rank  = int(r.get("rank") or 0)
+        dom   = r.get("domain_age_months")
+
+        tags_html = "".join(f'<span class="tag">{esc(t)}</span>' for t in tags[:6])
+        link_html = (f'<a href="{url}" target="_blank" class="site-link">'
+                     f'{url.replace("https://","").replace("http://","").split("/")[0]}'
+                     f' ↗</a>') if url else ""
+
+        dims = (
+            score_bar("Sector", r.get("sector_fit", 0), color) +
+            score_bar("Geo",    r.get("geo_fit",    0), color) +
+            score_bar("Stage",  r.get("stage_fit",  0), color) +
+            score_bar("Tech",   r.get("tech_fit",   0), color) +
+            score_bar("Theme",  r.get("theme_fit",  0), color)
+        )
+
+        meta_parts = []
+        if stage:    meta_parts.append(f'<span class="meta-chip">{stage}</span>')
+        if src:      meta_parts.append(f'<span class="meta-chip src">{src}</span>')
+        if dom:      meta_parts.append(f'<span class="meta-chip">Domain {dom}mo</span>')
+        if fund:     meta_parts.append(f'<span class="meta-chip fund">{fund}</span>')
+        meta_html = "".join(meta_parts)
+
+        signal_html = f'<div class="signal"><span class="sig-icon">⚡</span>{sig}</div>' if sig else ""
+        flag_html   = f'<div class="redflag"><span class="sig-icon">⚠</span>{flag}</div>' if flag else ""
+        reason_html = f'<p class="reason-text">{reason}</p>' if reason else ""
+
+        card = f"""
+<div class="card" data-score="{s}" data-name="{name.lower()}" data-source="{src.lower()}" style="border-top:4px solid {color};background:{bg}">
+  <div class="card-header">
+    <div class="rank-badge" style="background:{color}">#{rank}</div>
+    <div class="card-title-block">
+      <h2 class="company-name">{name}</h2>
+      {link_html}
+    </div>
+    <div class="score-badge" style="background:{color}">{STARS.get(s,"?")} {s}/5</div>
+  </div>
+  {f'<p class="desc-text">{desc}</p>' if desc else ""}
+  {reason_html}
+  <div class="tags-row">{tags_html}</div>
+  <div class="dims-block">{dims}</div>
+  <div class="meta-row">{meta_html}</div>
+  {signal_html}{flag_html}
+</div>"""
+        cards_html.append(card)
+        cards_json.append({"name": name.lower(), "score": s, "source": src.lower()})
+
+    avg_score = round(sum(r.get("overall_score", 0) for r in results) / len(results), 1) if results else 0
+    top5 = sum(1 for r in results if r.get("overall_score", 0) >= 4)
+    gen_time = datetime.now().strftime("%Y-%m-%d %H:%M")
+
+    html = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Startup Scout Results</title>
+<style>
+*{{box-sizing:border-box;margin:0;padding:0}}
+body{{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#f1f5f9;color:#1e293b;min-height:100vh}}
+header{{background:linear-gradient(135deg,#1e293b 0%,#334155 100%);color:#fff;padding:28px 32px 20px}}
+header h1{{font-size:1.6rem;font-weight:700;letter-spacing:-.5px}}
+header .subtitle{{font-size:.85rem;color:#94a3b8;margin-top:4px}}
+.thesis-box{{background:#0f172a;border-left:3px solid #6366f1;padding:10px 16px;margin-top:14px;border-radius:4px;font-size:.8rem;color:#cbd5e1;max-width:900px;white-space:pre-wrap}}
+.stats-bar{{display:flex;gap:24px;flex-wrap:wrap;padding:16px 32px;background:#fff;border-bottom:1px solid #e2e8f0}}
+.stat{{display:flex;flex-direction:column}}
+.stat-val{{font-size:1.5rem;font-weight:700;color:#1e293b}}
+.stat-lbl{{font-size:.75rem;color:#64748b;text-transform:uppercase;letter-spacing:.5px}}
+.controls{{display:flex;gap:12px;flex-wrap:wrap;padding:16px 32px;background:#fff;border-bottom:1px solid #e2e8f0;align-items:center}}
+.search-box{{flex:1;min-width:200px;max-width:360px;padding:8px 14px;border:1px solid #cbd5e1;border-radius:8px;font-size:.9rem;outline:none}}
+.search-box:focus{{border-color:#6366f1;box-shadow:0 0 0 3px rgba(99,102,241,.15)}}
+select{{padding:8px 12px;border:1px solid #cbd5e1;border-radius:8px;font-size:.9rem;background:#fff;cursor:pointer}}
+.filter-label{{font-size:.85rem;color:#475569;white-space:nowrap}}
+#count-display{{font-size:.85rem;color:#6366f1;font-weight:600;margin-left:auto}}
+.grid{{display:grid;grid-template-columns:repeat(auto-fill,minmax(360px,1fr));gap:20px;padding:24px 32px}}
+.card{{background:#fff;border-radius:12px;padding:20px;box-shadow:0 1px 3px rgba(0,0,0,.08);transition:box-shadow .2s,transform .2s;display:flex;flex-direction:column;gap:12px}}
+.card:hover{{box-shadow:0 8px 24px rgba(0,0,0,.12);transform:translateY(-2px)}}
+.card.hidden{{display:none}}
+.card-header{{display:flex;align-items:flex-start;gap:10px}}
+.rank-badge{{min-width:36px;height:36px;border-radius:50%;color:#fff;font-size:.8rem;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0}}
+.card-title-block{{flex:1;min-width:0}}
+.company-name{{font-size:1.05rem;font-weight:700;line-height:1.2;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}}
+.site-link{{font-size:.75rem;color:#6366f1;text-decoration:none;display:inline-block;margin-top:2px}}
+.site-link:hover{{text-decoration:underline}}
+.score-badge{{background:#16a34a;color:#fff;border-radius:8px;padding:5px 10px;font-size:.85rem;font-weight:700;white-space:nowrap;flex-shrink:0}}
+.desc-text{{font-size:.82rem;color:#475569;line-height:1.5}}
+.reason-text{{font-size:.8rem;color:#334155;font-style:italic;border-left:2px solid #e2e8f0;padding-left:10px}}
+.tags-row{{display:flex;flex-wrap:wrap;gap:5px}}
+.tag{{background:#e0e7ff;color:#4338ca;border-radius:20px;padding:2px 10px;font-size:.72rem;font-weight:500}}
+.dims-block{{display:flex;flex-direction:column;gap:5px}}
+.dim-row{{display:flex;align-items:center;gap:6px}}
+.dim-label{{font-size:.7rem;color:#64748b;text-transform:uppercase;width:36px;flex-shrink:0}}
+.bar-track{{flex:1;background:#e2e8f0;border-radius:4px;height:6px;overflow:hidden}}
+.bar-fill{{height:100%;border-radius:4px;transition:width .3s}}
+.dim-val{{font-size:.7rem;font-weight:700;width:10px;text-align:right;color:#374151}}
+.meta-row{{display:flex;flex-wrap:wrap;gap:5px}}
+.meta-chip{{font-size:.7rem;background:#f1f5f9;color:#475569;border-radius:4px;padding:2px 8px;border:1px solid #e2e8f0}}
+.meta-chip.src{{background:#faf5ff;color:#7c3aed;border-color:#e9d5ff}}
+.meta-chip.fund{{background:#f0fdf4;color:#16a34a;border-color:#bbf7d0}}
+.signal{{font-size:.78rem;color:#15803d;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:6px;padding:5px 10px}}
+.redflag{{font-size:.78rem;color:#b91c1c;background:#fef2f2;border:1px solid #fecaca;border-radius:6px;padding:5px 10px}}
+.sig-icon{{margin-right:5px}}
+footer{{text-align:center;padding:24px;color:#94a3b8;font-size:.78rem}}
+@media(max-width:600px){{.grid{{grid-template-columns:1fr;padding:16px}}.controls,.stats-bar{{padding:12px 16px}}header{{padding:20px 16px}}}}
+</style>
+</head>
+<body>
+<header>
+  <h1>🚀 Startup Scout Results</h1>
+  <div class="subtitle">Generated {gen_time} · Multi-agent AI discovery pipeline</div>
+  {f'<div class="thesis-box"><strong>Thesis:</strong> {esc(thesis[:300])}</div>' if thesis else ""}
+</header>
+
+<div class="stats-bar">
+  <div class="stat"><span class="stat-val">{len(results)}</span><span class="stat-lbl">Companies found</span></div>
+  <div class="stat"><span class="stat-val">{top5}</span><span class="stat-lbl">Score ≥ 4/5</span></div>
+  <div class="stat"><span class="stat-val">{avg_score}</span><span class="stat-lbl">Avg score</span></div>
+  <div class="stat"><span class="stat-val">28</span><span class="stat-lbl">Sources searched</span></div>
+</div>
+
+<div class="controls">
+  <input class="search-box" type="text" id="search" placeholder="Search company name or source…" oninput="filterCards()">
+  <span class="filter-label">Min score:</span>
+  <select id="min-score" onchange="filterCards()">
+    <option value="0">All</option>
+    <option value="3">3+ ★★★</option>
+    <option value="4">4+ ★★★★</option>
+    <option value="5">5 only ★★★★★</option>
+  </select>
+  <span class="filter-label">Sort:</span>
+  <select id="sort-by" onchange="sortCards()">
+    <option value="rank">Rank</option>
+    <option value="score-desc">Score ↓</option>
+    <option value="score-asc">Score ↑</option>
+    <option value="name">Name A–Z</option>
+  </select>
+  <span id="count-display">{len(results)} shown</span>
+</div>
+
+<div class="grid" id="grid">
+{"".join(cards_html)}
+</div>
+
+<footer>Startup Scout · Powered by Groq llama-3.3-70b-versatile · {len(results)} results · {gen_time}</footer>
+
+<script>
+const grid = document.getElementById('grid');
+const allCards = Array.from(grid.querySelectorAll('.card'));
+function filterCards() {{
+  const q = document.getElementById('search').value.toLowerCase();
+  const minS = parseInt(document.getElementById('min-score').value);
+  let shown = 0;
+  allCards.forEach(c => {{
+    const nameMatch = c.dataset.name.includes(q) || c.dataset.source.includes(q);
+    const scoreMatch = parseInt(c.dataset.score) >= minS;
+    const hide = !nameMatch || !scoreMatch;
+    c.classList.toggle('hidden', hide);
+    if (!hide) shown++;
+  }});
+  document.getElementById('count-display').textContent = shown + ' shown';
+}}
+function sortCards() {{
+  const by = document.getElementById('sort-by').value;
+  const cards = allCards.slice().sort((a, b) => {{
+    if (by === 'score-desc') return parseInt(b.dataset.score) - parseInt(a.dataset.score);
+    if (by === 'score-asc')  return parseInt(a.dataset.score) - parseInt(b.dataset.score);
+    if (by === 'name')       return a.dataset.name.localeCompare(b.dataset.name);
+    return allCards.indexOf(a) - allCards.indexOf(b);
+  }});
+  cards.forEach(c => grid.appendChild(c));
+}}
+</script>
+</body>
+</html>"""
+
+    with open(filepath, "w", encoding="utf-8") as f:
+        f.write(html)
+    print(f"  ✓ HTML → {filepath}  (open in browser)")
+
+
 def print_top_table(results, n=10):
     STARS = {5:"★★★★★", 4:"★★★★☆", 3:"★★★☆☆", 2:"★★☆☆☆", 1:"★☆☆☆☆", 0:"☆☆☆☆☆"}
     rows  = []
@@ -2967,6 +3185,7 @@ def main():
     print_top_table(final_results)
     save_excel(final_results)
     save_csv(final_results)
+    save_html(final_results, thesis=thesis)
 
     elapsed        = round(time.time() - t0)
     top            = final_results[0]
@@ -2978,7 +3197,7 @@ def main():
         f"{funded_removed} funded removed  →  {len(final_results)} final\n"
         f"  Top match  : {top.get('name','N/A')[:60]}  ({top.get('overall_score',0)}/5)\n"
         f"  Completed  : {elapsed}s\n"
-        f"  Results    → {OUTPUT_XLSX}\n"
+        f"  Results    → {OUTPUT_XLSX}  |  {OUTPUT_HTML}\n"
         f"{'─'*68}\n"
     )
 
