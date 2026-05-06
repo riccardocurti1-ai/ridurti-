@@ -257,30 +257,33 @@ def extract_thesis_keywords(client, thesis):
 
 def is_article_title(name):
     """
-    Heuristic: return True if the name looks like a news article or research paper
+    Heuristic: return True if the name looks like a news article / HN post title
     rather than a company/product name.
-    Company names are short proper nouns. Articles are long sentences.
     """
     if not name:
         return True
-    # Too long to be a company name
-    if len(name) > 75:
+    if len(name) > 80:
         return True
     words = name.split()
-    # More than 8 words = likely a sentence
-    if len(words) > 8:
+    if len(words) > 9:
         return True
-    # Starts with common article/sentence starters (lowercase = sentence not brand)
+    name_low = name.lower()
+    # First-person or sentence starters that are never company names
     starters = [
         "the ", "a ", "an ", "how ", "why ", "what ", "when ", "where ",
+        "i ", "i'", "we ", "we'", "our ", "my ",
         "microsoft ", "google ", "apple ", "amazon ", "meta ", "nvidia ",
         "more ", "new ", "study ", "using ", "researchers ", "scientists ",
         "co-designing ", "dna ", "human ", "crops ", "nitrogen ",
+        "free ", "open ", "introducing ", "announcing ", "building ",
+        "asking ", "show ", "tell ", "help ", "let ", "this ",
     ]
-    name_low = name.lower()
     if any(name_low.startswith(s) for s in starters):
         return True
-    # Contains punctuation typical of sentences but not company names
+    # Verb-heavy first words = sentence, not brand
+    if re.match(r"^(i |we |i'|we'|i'm |we're |i've |we've )", name_low):
+        return True
+    # Contains punctuation typical of sentences
     if name.count(":") > 1 or "?" in name or name.endswith("."):
         return True
     return False
@@ -1850,12 +1853,17 @@ def keyword_filter_and_dedup(startups, thesis_keywords=None):
                 rm_irrelevant += 1
         clean = relevant
 
-    # Step 3: deduplicate by name
-    seen_names, deduped = set(), []
+    # Step 3: deduplicate by name — exact match on first 40 chars AND first 3 words
+    seen_names, seen_prefix, deduped = set(), set(), []
     for s in clean:
-        key = s["name"].lower().strip()[:40]
-        if key and len(key) > 2 and key not in seen_names:
-            seen_names.add(key)
+        full_key  = s["name"].lower().strip()
+        short_key = full_key[:40]
+        # First-3-words key catches "PyTogether, open-source..." duplicates with different suffixes
+        words3    = " ".join(full_key.split()[:3])
+        if short_key and len(short_key) > 2 and short_key not in seen_names and words3 not in seen_prefix:
+            seen_names.add(short_key)
+            if words3:
+                seen_prefix.add(words3)
             deduped.append(s)
 
     # Step 4: deduplicate by domain
@@ -2559,7 +2567,12 @@ def run_analyst_agent(client, raw_startups, thesis, thesis_keywords=None):
             f"  • If company has raised Series A or beyond (≥$5M VC) → stage_fit = 1, overall ≤ 2\n"
             f"  • If company name matches a well-known scaleup → overall = 1\n"
             f"  • If description says 'acquired', 'IPO', 'publicly traded' → overall = 1\n"
-            f"  • Universities and government bodies → overall = 1 (not investable startups)"
+            f"  • Universities and government bodies → overall = 1 (not investable startups)\n"
+            f"  • Pure screen-based tools (coding IDEs, flashcard apps, LMS platforms, AI tutors "
+            f"for coding/maths) → theme_fit = 1 if thesis emphasises outdoor/embodied/creative "
+            f"learning. Being in 'EdTech' is NOT sufficient for theme_fit ≥ 3.\n"
+            f"  • HN post titles that are not company names (start with 'I built', 'We're', "
+            f"'Show HN', full sentences) → overall = 1"
         )
 
         try:
@@ -2885,16 +2898,10 @@ def main():
     print("  Flow:    Thesis → Keywords → Scout (15 real sources) → Analyst → Verifier + Excel")
     print("=" * 68 + "\n")
 
-    google_key = os.getenv("GOOGLE_API_KEY", "").strip()
-    groq_key   = os.getenv("GROQ_API_KEY",  "").strip()
+    groq_key = os.getenv("GROQ_API_KEY", "").strip()
 
-    if not google_key and not groq_key:
-        print("ERROR: No API key found.\n")
-        print("OPTION A — Google Gemini (RECOMMENDED: 1 million tokens/day free):")
-        print("  1. Go to https://aistudio.google.com → Get API Key → Create key")
-        print("  2. Add to .env:  GOOGLE_API_KEY=your_key_here")
-        print()
-        print("OPTION B — Groq (100k tokens/day free, resets daily):")
+    if not groq_key:
+        print("ERROR: No GROQ_API_KEY found in .env\n")
         print("  1. Go to https://console.groq.com → API Keys → Create key")
         print("  2. Add to .env:  GROQ_API_KEY=your_key_here")
         sys.exit(1)
@@ -2902,54 +2909,14 @@ def main():
     global MODEL, _API_CLIENTS
     _API_CLIENTS = []
 
-    # ── Google Gemini (try multiple models, add first that works) ──────────────
-    if google_key:
-        _gemini_base = "https://generativelanguage.googleapis.com/v1beta/openai/"
-        _gemini_client = openai.OpenAI(api_key=google_key, base_url=_gemini_base)
-        _gemini_candidates = [
-            "gemini-2.0-flash-lite", "gemini-1.5-flash",
-            "gemini-2.0-flash",      "gemini-1.5-flash-8b",
-        ]
-        _gemini_added = False
-        for _m in _gemini_candidates:
-            try:
-                _gemini_client.chat.completions.create(
-                    model=_m, messages=[{"role": "user", "content": "hi"}], max_tokens=5,
-                )
-                _API_CLIENTS.append((_gemini_client, _m, f"Gemini/{_m}"))
-                print(f"  ✓ Google Gemini ({_m}) — added")
-                _gemini_added = True
-                break
-            except Exception as _ge:
-                _emsg = str(_ge)
-                if "quota" in _emsg.lower() or "429" in _emsg or "limit" in _emsg.lower():
-                    print(f"  ⚠ Gemini {_m}: quota exhausted, trying next model...")
-                elif "404" in _emsg or "not found" in _emsg.lower():
-                    print(f"  ⚠ Gemini {_m}: not available in your region/project, trying next...")
-                else:
-                    print(f"  ⚠ Gemini {_m}: {_emsg[:100]}")
-        if not _gemini_added:
-            print("  ⚠ Google key could not connect to any Gemini model.")
-            print("    → Make sure key is from https://aistudio.google.com (not Google Cloud Console)")
+    _groq_client = openai.OpenAI(
+        api_key=groq_key,
+        base_url="https://api.groq.com/openai/v1",
+    )
+    _API_CLIENTS.append((_groq_client, "llama-3.3-70b-versatile", "Groq"))
+    print(f"  ✓ Groq (llama-3.3-70b-versatile) — 100k tokens/day free")
 
-    # ── Groq (always add if key present — serves as fallback) ─────────────────
-    if groq_key:
-        _groq_client = openai.OpenAI(
-            api_key=groq_key,
-            base_url="https://api.groq.com/openai/v1",
-        )
-        _API_CLIENTS.append((_groq_client, "llama-3.3-70b-versatile", "Groq"))
-        print(f"  ✓ Groq (llama-3.3-70b-versatile) — added as {'secondary' if len(_API_CLIENTS) > 1 else 'primary'}")
-
-    if not _API_CLIENTS:
-        print("ERROR: No working API key found.\n")
-        print("  Get a free Groq key:   https://console.groq.com")
-        print("  Get a free Gemini key: https://aistudio.google.com")
-        sys.exit(1)
-
-    # Primary client/model for legacy run_agent calls
     client, MODEL, _ = _API_CLIENTS[0]
-    print(f"  Primary: {MODEL} | {len(_API_CLIENTS)} API source(s) configured")
 
     print("Paste your investor thesis below.")
     print("Press ENTER TWICE when done (or once with nothing to skip):\n")
