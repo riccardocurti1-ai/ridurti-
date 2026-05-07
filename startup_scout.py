@@ -3113,7 +3113,7 @@ def main():
     print("           CORDIS EU · University Spinoffs · EIC Portfolio · RSS Feeds")
     print("           Crunchbase DDG · Dealroom DDG · Sifted · EU-Startups + more")
     print("  AI role: keyword extraction · scoring only — NO hallucinated companies")
-    print("  Flow:    Thesis → Keywords → Scout (15 real sources) → Analyst → Verifier + Excel")
+    print("  Flow:    Thesis → Keywords → Scout (28 real sources) → Analyst → Verifier + Excel + HTML")
     print("=" * 68 + "\n")
 
     groq_key = os.getenv("GROQ_API_KEY", "").strip()
